@@ -1,0 +1,104 @@
+### Useful links:
+## https://www.rohlix.eu/post/artix-linux-full-disk-encryption-with-uefi/ 
+## https://forum.artixlinux.org/index.php/topic,1541.0.html
+# login using artix:artix credentials and become root
+sudo su
+# load key layout
+loadkeys pl
+# update packages
+pacman -Sy
+# install remotely via ssh
+pacman -S --noconfirm glibc openssh openssh-openrc
+rc-service sshd start
+ssh artix@192.168.1.22
+# remove existing partitions, e.g. using fdisk
+fdisk /dev/sdb
+	d # delete
+	w # write
+	p # print
+	n # new
+# partition installation drive (assumed sdb) using parted
+pacman -S --noconfirm parted
+parted -s /dev/sdb print
+parted -s /dev/sdb mklabel gpt
+parted -s -a optimal /dev/sdb mkpart "primary" "fat16" "0%" "1GiB"
+parted -s /dev/sdb set 1 esp on
+parted -s -a optimal /dev/sdb mkpart "primary" "ext4" "1GiB" "100%"
+parted -s /dev/sdb set 2 lvm on
+# encrypt second (non-boot) partition
+cryptsetup luksFormat -v /dev/sdb2
+# open it
+cryptsetup luksOpen /dev/sdb2 lvm-system
+# creating physical volume, logical volumes, formatting and mounting
+pvcreate /dev/mapper/lvm-system
+vgcreate lvmSystem /dev/mapper/lvm-system
+lvcreate -l +100%FREE lvmSystem -n volRoot
+mkfs.fat -n ESP /dev/sdb1
+mkfs.ext4 -L volRoot /dev/lvmSystem/volRoot
+mount /dev/lvmSystem/volRoot /mnt
+mkdir -p /mnt/boot/EFI
+mount /dev/sdb1 /mnt/boot/EFI
+# install base
+basestrap /mnt base base-devel openrc linux-firmware
+# generate fstab, edit and verify, also set root, swap, home and etc..
+fstabgen -U /mnt >> /mnt/etc/fstab 
+# become root at the newly installed system
+artools-chroot /mnt /bin/bash
+# configure
+# - system clock
+ln -sf /usr/share/zoneinfo/Europe/Warsaw /etc/localtime
+hwclock --systohc
+# - localization
+pacman -S --noconfirm vim
+vim /etc/locale.gen 
+# uncomment the locales you desire
+locale-gen
+# -- make it system wide
+echo LANG=en_US.UTF-8 > /etc/locale.conf
+export LANG=en_US.UTF-8
+# - hostname
+echo "thinkc" > /etc/hostname
+# change parameters and compile (?) kernel
+pacman -S lvm2 --noconfirm cryptsetup linux mkinitcpio
+sed -i "s/modconf block/modconf block encrypt lvm2/g" /etc/mkinitcpio.conf
+mkinitcpio -p linux
+# - root password
+passwd
+# grub
+pacman -S --noconfirm grub efibootmgr
+vim /etc/default/grub
+#
+# blkid -s UUID -o value /dev/sdb2
+# insert sure such entry is present with UUID from above command 
+# GRUB_CMDLINE_LINUX="cryptdevice=UUID=@@@@ABOVE@@@@:lvm-system"
+#
+# delete '#' before GRUB_ENABLE_CRYPTODISK=y
+#
+grub-install --target=x86_64-efi --efi-directory=/boot/EFI --bootloader-id=artix --recheck /dev/sdb
+grub-mkconfig -o /boot/grub/grub.cfg
+# services
+pacman -S --noconfirm device-mapper-openrc lvm2-openrc cryptsetup-openrc
+rc-update add device-mapper boot
+rc-update add lvm boot
+rc-update add dmcrypt boot
+# this should be installed and activated: 
+# 	rc-status sysinit | grep udev
+#	rc-status default | grep dbus # if not: rc-update add dbus default
+#	rc status boot | grep elogind # if not: rc-update add elogind boot
+pacman -S --noconfirm cronie cronie-openrc
+rc-update add cronie default
+# add unpriviliged user
+useradd -m -G wheel -s /bin/bash hiimmill
+passwd hiimmill
+# network
+pacman -S --noconfirm dhcpcd connman-openrc
+rc-update add connmand
+usermod -a -G wheel hiimmill
+# useful stuff
+pacman -S --noconfirm yaourt htop rsync zip unzip
+# theoretically that's it
+# remember to cp lvm backup somewhere safe after booting into artix: cp /etc/lvm/backup/* /somewhere/safe
+exit
+umount -R /mnt
+reboot
+
