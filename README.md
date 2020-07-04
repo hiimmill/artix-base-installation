@@ -4,3 +4,4 @@ See:
  - https://wiki.artixlinux.org/Main/Installation
  - https://forum.artixlinux.org/index.php/topic,1541.0.html
  - https://www.rohlix.eu/post/artix-linux-full-disk-encryption-with-uefi/
+ - https://www.howtoforge.com/tutorial/how-to-install-arch-linux-with-full-disk-encryption/

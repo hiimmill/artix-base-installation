@@ -24,18 +24,14 @@ parted -s /dev/sdb mklabel gpt
 parted -s -a optimal /dev/sdb mkpart "primary" "fat16" "0%" "1GiB"
 parted -s /dev/sdb set 1 esp on
 parted -s -a optimal /dev/sdb mkpart "primary" "ext4" "1GiB" "100%"
-parted -s /dev/sdb set 2 lvm on
 # encrypt second (non-boot) partition
 cryptsetup luksFormat -v /dev/sdb2
 # open it
-cryptsetup luksOpen /dev/sdb2 lvm-system
-# creating physical volume, logical volumes, formatting and mounting
-pvcreate /dev/mapper/lvm-system
-vgcreate lvmSystem /dev/mapper/lvm-system
-lvcreate -l +100%FREE lvmSystem -n volRoot
-mkfs.fat -n ESP /dev/sdb1
-mkfs.ext4 -L volRoot /dev/lvmSystem/volRoot
-mount /dev/lvmSystem/volRoot /mnt
+cryptsetup luksOpen /dev/sdb2 cryptroot
+# format and mount
+mkfs.fat /dev/sdb1
+mkfs.ext4 -L cryptroot /dev/mapper/cryptroot
+mount /dev/mapper/cryptroot /mnt
 mkdir -p /mnt/boot/EFI
 mount /dev/sdb1 /mnt/boot/EFI
 # install base
@@ -58,28 +54,30 @@ echo LANG=en_US.UTF-8 > /etc/locale.conf
 export LANG=en_US.UTF-8
 # - hostname
 echo "thinkc" > /etc/hostname
-# change parameters and compile (?) kernel
-pacman -S lvm2 --noconfirm cryptsetup linux mkinitcpio
-sed -i "s/modconf block/modconf block encrypt lvm2/g" /etc/mkinitcpio.conf
-mkinitcpio -p linux
+# - hosts
+echo "127.0.0.1		localhost" >> /etc/hosts
+echo "::1		localhost" >> /etc/hosts
+echo "127.0.0.1		desktop.localdomain desktop" >> /etc/hosts
 # - root password
 passwd
+# add unpriviliged user
+useradd -m -G wheel -s /bin/bash hiimmill
+passwd hiimmill
+# change parameters and compile (?) kernel
+pacman -S --noconfirm cryptsetup linux mkinitcpio
+sed -i "s/modconf block/modconf block encrypt/g" /etc/mkinitcpio.conf
+mkinitcpio -p linux
 # grub
 pacman -S --noconfirm grub efibootmgr
 vim /etc/default/grub
 #
-# blkid -s UUID -o value /dev/sdb2
-# insert sure such entry is present with UUID from above command 
-# GRUB_CMDLINE_LINUX="cryptdevice=UUID=@@@@ABOVE@@@@:lvm-system"
-#
-# delete '#' before GRUB_ENABLE_CRYPTODISK=y
+# GRUB_CMDLINE_LINUX="cryptdevice=:/dev/mapper/cryptroot:cryptroot"
 #
 grub-install --target=x86_64-efi --efi-directory=/boot/EFI --bootloader-id=artix --recheck /dev/sdb
 grub-mkconfig -o /boot/grub/grub.cfg
 # services
-pacman -S --noconfirm device-mapper-openrc lvm2-openrc cryptsetup-openrc
+pacman -S --noconfirm device-mapper-openrc cryptsetup-openrc
 rc-update add device-mapper boot
-rc-update add lvm boot
 rc-update add dmcrypt boot
 # this should be installed and activated: 
 # 	rc-status sysinit | grep udev
@@ -87,17 +85,12 @@ rc-update add dmcrypt boot
 #	rc status boot | grep elogind # if not: rc-update add elogind boot
 pacman -S --noconfirm cronie cronie-openrc
 rc-update add cronie default
-# add unpriviliged user
-useradd -m -G wheel -s /bin/bash hiimmill
-passwd hiimmill
 # network
-pacman -S --noconfirm dhcpcd connman-openrc
-rc-update add connmand
-usermod -a -G wheel hiimmill
+pacman -S --noconfirm networkmanager networkmanager-openrc 
+rc-update add NetworkManager default 
 # useful stuff
 pacman -S --noconfirm yaourt htop rsync zip unzip
 # theoretically that's it
-# remember to cp lvm backup somewhere safe after booting into artix: cp /etc/lvm/backup/* /somewhere/safe
 exit
 umount -R /mnt
 reboot
